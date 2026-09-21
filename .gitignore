@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+chroma_db/
+.idea/
+.vscode/
+.ipynb_checkpoints/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+Thumbs.db
+
+# 运行时产物
+outputs/
+cache/
+logs/
+*.log
+
+# Streamlit 机密文件（Key 不要写进这里再提交）
+.streamlit/secrets.toml
+
+# 注意：results/ **要提交**——它是评估结论的证据，体积也很小（<100KB）
+

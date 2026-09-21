@@ -1,0 +1,20 @@
+[server]
+# 容器/服务器里运行时必须有；本地也保持一致，避免弹浏览器
+headless = true
+port = 8501
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2b6cb0"
+
+[client]
+# 一次完整研究可能跑 5~10 分钟，把超时放宽，避免前端断开
+showErrorDetails = true
+toolbarMode = "minimal"

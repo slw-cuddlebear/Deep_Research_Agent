@@ -1,0 +1,42 @@
+# 构建镜像时忽略的内容
+# 目的：镜像里只放"跑起来必需的东西"，密钥与运行产物一律不进镜像。
+
+# ---- 版本控制与编辑器 ----
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+
+# ---- 虚拟环境与缓存 ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- 密钥：绝对不能进镜像 ----
+.env
+
+# ---- 运行产物（容器里由挂载卷提供）----
+outputs/
+results/
+cache/
+logs/
+*.log
+
+# ---- 向量索引：进容器后按挂载卷或首次检索时重建 ----
+chroma_db/
+
+# ---- 文档与说明 ----
+docs/
+*.png
+*.jpg
+
+# ---- 保留这些（不忽略）----
+# data/                  测试问题集与本地知识库语料，run_tests / eval 需要
+# tests/                 自检脚本，容器内可直接跑
+# requirements.txt       pip 安装依赖
+# app.py main.py ...     代码本体

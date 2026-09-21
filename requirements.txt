@@ -1,0 +1,48 @@
+# ========== 编排框架 ==========
+langgraph
+langchain
+langchain-core
+langchain-community
+langchain-classic
+langchain-openai
+langchain-text-splitters
+langchain-chroma
+langchain-huggingface
+
+# ========== 大模型与环境 ==========
+python-dotenv
+pydantic
+tenacity
+
+# ========== 网页搜索 ==========
+tavily-python
+ddgs
+
+# ========== 网页抓取 ==========
+trafilatura
+beautifulsoup4
+lxml
+requests
+httpx
+
+# ========== 本地知识库 ==========
+chromadb
+sentence-transformers
+rank_bm25
+
+# ========== 前端 ==========
+streamlit
+
+# ========== 报告导出 ==========
+markdown
+xhtml2pdf
+pypdf
+
+# ========== 可观测性 ==========
+langfuse
+
+# ========== 工具 ==========
+rich
+pandas
+numpy
+tqdm
