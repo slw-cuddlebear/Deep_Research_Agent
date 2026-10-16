@@ -27,14 +27,20 @@ LABEL org.opencontainers.image.title="Deep Research Agent" \
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 # ---- CPU 版 PyTorch ----
 # 项目只在 CPU 上跑 embedding，而 PyPI 上 Linux 的 torch 默认是 CUDA 版，
-# 会连带拉约 2GB 的 nvidia-* 依赖，把镜像从 ~1.2GB 撑到 ~4GB。
+# 会连带拉约 2GB 的 nvidia-* 依赖，明显撑大镜像。
 # 所以先从国内镜像单独装 CPU 版，后面装 requirements 时 pip 会认为 torch 已满足。
+# （实测最终镜像体积约 3.17GB，见 README「工程验证记录」。）
 #
 # 镜像源实测（同一个 torch-2.6.0+cpu 轮子）：
 #   上交大 mirror.sjtu.edu.cn  11.9 MB/s  ✅
 #   阿里云 mirrors.aliyun.com   0.08 MB/s  ❌（会卡到超时）
 # 注意：上交大的 /cpu/ 是 PEP 503 包索引（按包名分子目录），
 # 不能当 --find-links 用，只能走直链或用它当 index。
+#
+# ⚠️ 这里的 torch 版本（2.6.0+cpu）是容器内 CPU 轮子的**锁定版本**，
+# 与 requirements.txt 无关（该文件不写 torch）。本机 Windows 开发环境的 torch
+# 版本可能不同，不影响镜像构建。
+
 ARG TORCH_WHEEL=https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/torch-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl
 ARG TORCH_CPU_INDEX=https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/
 ARG TORCH_SPEC=torch==2.6.0+cpu

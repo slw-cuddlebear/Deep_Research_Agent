@@ -17,14 +17,14 @@
 - 🔁 **反思循环**：判断信息充分性，不充分则自动生成补充检索词再搜，四道规则刹车保证收敛
 - 🔗 **引用溯源**：按来源编号、越界编号剔除、连续重编号，网络与本地来源分组展示
 - 📝 **报告生成**：摘要 / 正文 / 结论 / 参考文献 / 研究过程附录，导出 Markdown、HTML、PDF
-- 📚 **本地知识库**：Chroma + BGE 语义检索，增量索引，与网页结果统一尺度融合
+- 📚 **本地知识库**：Chroma + BGE 语义检索，语料未变则复用索引，与网页结果统一尺度融合
 - 🖥️ **过程可视化**：Streamlit 实时展示思考、检索、反思轨迹，支持在线预览与三种格式下载
 - ⏱️ **可观测性**：本地 span 树追踪（耗时 / Token / 成本），可选上报 LangFuse
 - 💰 **成本核算**：按官方价目表计算，区分高峰/错峰与缓存命中
 - 🧪 **量化评估**：策略消融实验 + 自研 LLM 裁判评估报告质量
 - 🩺 **环境体检**：`--doctor` 一次查清依赖、Key、网络、字体、知识库、可观测性
 - 🔌 **离线演示**：无 API Key 也能完整跑通界面与链路（假模型 + 假搜索）
-- 🐳 **容器化**：Dockerfile + docker-compose，已实测构建并运行通过
+- 🐳 **容器化**：Dockerfile + docker-compose（镜像构建与运行已实测通过，验证环境见「工程验证记录」）
 
 ## 🏗️ 系统架构
 
@@ -66,11 +66,11 @@
 | 大模型 | DeepSeek API | 兼容 OpenAI 接口 |
 | 网页搜索 | Tavily / DuckDuckGo | 有 Key 用 Tavily，无 Key 自动降级 |
 | 网页抓取 | Trafilatura / BeautifulSoup | 主抓取器 + 兜底抓取器 |
-| 本地检索 | Chroma + BAAI/bge-small-zh-v1.5 | CPU 可跑，增量索引 |
+| 本地检索 | Chroma + BAAI/bge-small-zh-v1.5 | CPU 可跑，指纹未变则复用索引 |
 | 前端 | Streamlit | 实时过程可视化 |
 | 可观测性 | 自研 span 树 + LangFuse（可选） | 不填 Key 自动降级为纯本地追踪 |
 | 报告导出 | markdown + xhtml2pdf + pypdf | 中文字体运行时自动探测 |
-| 部署 | Docker + Docker Compose | 已实测构建与运行 |
+| 部署 | Docker + Docker Compose | 已在 WSL2 Ubuntu 24.04 上实测构建与运行 |
 | 依赖管理 | requirements.txt | |
 
 ## 🚀 快速开始
@@ -117,7 +117,16 @@ TAVILY_API_KEY=tvly-你的key
 
 # 可选：模型下载加速
 HF_ENDPOINT=https://hf-mirror.com
+
+# 可选：关闭本地知识库（等价于每次都加 --no-local）
+USE_LOCAL_KB=1
+
+# 可选：最大搜索轮数，命令行 --max-iter 会覆盖它
+MAX_ITERATIONS=3
 ```
+
+> `.env.example` 里列出了全部可用变量（含 LangFuse 与成本核算）。
+> 私有化部署的 LangFuse 改 `LANGFUSE_HOST` 即可，旧写法 `LANGFUSE_BASE_URL` 同样被识别。
 
 > **关于免费兜底搜索**：代码保留了 DuckDuckGo 作为免 Key 兜底引擎，但部分网络环境不可达
 > （实测 `html.duckduckgo.com:443` 与 `search.brave.com:443` 均超时）。
@@ -251,7 +260,7 @@ Deep_Research_Agent/
 ├── outputs/                 # 每次研究的产物（自动生成）
 ├── results/                 # 评估结果与结果索引
 ├── chroma_db/               # 本地知识库向量索引（自动生成）
-└── tests/                   # 自检脚本（8 个 Phase + 缺陷回归，共 584 项）
+└── tests/                   # 自检脚本（8 个 Phase + 缺陷回归，共 599 项）
     ├── test_phase1.py           # 状态图 / 工具函数 / 离线端到端
     ├── test_phase2.py           # 反思循环 / 四道刹车 / 条件边
     ├── test_phase3.py           # 引用编号与重编号 / 大纲规整 / 报告导出
@@ -309,8 +318,9 @@ python main.py --rebuild-kb          # 放入文档后强制重建索引（首�
 python main.py "研究问题" --no-local  # 只用网页搜索
 ```
 
-索引是**增量**的：以文件指纹（文件名 + 大小 + 内容哈希）判断语料是否变化，
-未变化则直接复用，不会每次启动都重新向量化。
+索引按**语料指纹**（文件名 + 大小 + 内容哈希）判断是否需要重建：
+指纹没变就直接复用已有索引，不会每次启动都重新向量化；
+**一旦增删改任一文档，则会清空向量库并全量重建**（不是只更新变化的那几篇）。
 
 **融合排序（不使用额外精排模型）**：
 
@@ -338,7 +348,8 @@ python main.py "研究问题" --no-local  # 只用网页搜索
 | PDF | xhtml2pdf 渲染，中文字体运行时自动探测，中文按版面宽度主动断行 |
 
 **中文字体**：探测覆盖 Windows（等线/黑体/微软雅黑）、macOS（苹方/宋体）、Linux（文泉驿/Noto CJK）。
-探测失败时**跳过 PDF 并说明原因**，不会输出方框字。Linux 上可执行 `apt-get install fonts-wqy-zenhei`。
+探测失败时**跳过 PDF 并说明原因**。字体成功嵌入后还会用 pypdf 把文字抽回来核对，
+按样本缺失比例判定"字体覆盖不全"，避免输出方框字。Linux 上可执行 `apt-get install fonts-wqy-zenhei`。
 
 **中文断行**：xhtml2pdf 只会按**空格**断词，而中文没有空格，因此一整段中文会被画成单行冲出页面
 右边界、超出部分被裁掉；它自带的 CJK 开关 `-pdf-word-wrap: CJK` 又存在 bytes/str 混用的实现缺陷，
@@ -473,8 +484,9 @@ F30 的 12% 是 DualPipe 气泡率，报告将二者合并为同一因果表述"
 
 ### 3. 工程验证记录
 
-**自检覆盖**：**584 项**，全部可在无 API Key 环境下离线运行。其中 523 项按 Phase 组织，
-61 项是针对真实使用中暴露缺陷的专项回归（见「踩坑与解决」）。
+**自检覆盖**：**599 项**，全部可在无 API Key 环境下离线运行。其中 526 项按 Phase 组织，
+73 项是针对真实使用中暴露缺陷的专项回归（见「踩坑与解决」）。
+（本地知识库相关用例需要 BGE 模型，**首次运行需联网下载**，之后即离线。）
 
 | 模块 | 项数 | 覆盖内容 |
 |---|---|---|
@@ -485,10 +497,25 @@ F30 的 12% 是 DualPipe 气泡率，报告将二者合并为同一因果表述"
 | Phase 6 | 39 | Streamlit 前端（用官方 AppTest 真跑脚本） |
 | Phase 7 | 64 | 成本核算、span 树、并发上下文继承（真实 OTEL 验证）、上报容错 |
 | Phase 8 | 55 | 消融矩阵、裁判解析、聚合与报告渲染 |
-| Phase 9 | 120 | Docker 配置静态校验、仓库卫生、标准工程文件 |
-| 缺陷回归 | 61 | 模型注入作用域隔离、二进制内容拦截、子问题主语校验、PDF 中文折行 |
+| Phase 9 | 123 | Docker 配置静态校验、Streamlit CORS 安全、仓库卫生、标准工程文件 |
+| 缺陷回归 | 73 | 模型注入作用域隔离、二进制内容拦截、子问题主语校验、PDF 中文折行、跨章引用白名单、字体覆盖校验 |
 
-**Docker 验证**（Windows 11 + WSL2 Ubuntu 24.04.3 + Docker 29.1.3）：
+**本机实测环境**（`requirements.txt` 已按下界 + 主版本上界约束，下表是编写时实际装到的版本）：
+
+| 包 | 版本 | 包 | 版本 |
+|---|---|---|---|
+| Python | 3.11.0 | langgraph | 1.2.11 |
+| langchain | 1.4.2 | langchain-core | 1.6.3 |
+| langchain-huggingface | 1.2.2 | langchain-chroma | 1.1.0 |
+| chromadb | 1.5.9 | streamlit | 1.64.0 |
+| trafilatura | 2.2.0 | xhtml2pdf | 0.2.20 |
+| langfuse | 4.15.4 | pandas | 3.0.6 |
+
+> 注意：`requirements.txt` 只约束**直接依赖**的版本区间；间接依赖由 pip 解析。
+> 因此上面的清单是"编写时实测通过"的记录，不是逐包锁定的 lock 文件。
+> Docker 相关结论同样是**当时的实测记录**（见下表），换机器或上游发版后需重新验证。
+
+**Docker 验证**（Windows 11 + WSL2 Ubuntu 24.04.3 + Docker 29.1.3，历史记录）：
 
 | 验证项 | 结果 |
 |---|---|
@@ -523,7 +550,7 @@ docker compose run --rm eval
 | `Dockerfile` | python:3.11-slim，换国内 Debian/pip 源，装中文字体，只装 CPU 版 torch |
 | `docker-compose.yml` | web / cli / doctor / eval 四个服务；密钥走 `env_file`，数据与索引挂载到宿主机 |
 | `.dockerignore` | `.env`、`.venv`、`outputs`、`chroma_db` 等一律不进镜像 |
-| `.streamlit/config.toml` | headless 模式、端口 8501、关闭统计上报 |
+| `.streamlit/config.toml` | headless 模式、端口 8501、CORS 白名单、关闭统计上报 |
 
 设计要点：
 
@@ -601,7 +628,7 @@ wsl --import DeepResearch D:\WSL\DeepResearch "$env:USERPROFILE\Downloads\ubuntu
 - [x] 结构化报告生成（摘要 / 正文 / 结论 / 参考文献 / 研究过程附录）
 - [x] 引用溯源（按来源编号、越界剔除、连续重编号、网络与本地分组）
 - [x] 导出 Markdown / HTML / PDF（中文字体自动探测、中文按版面宽度主动断行）
-- [x] 本地知识库（Chroma + BGE，增量索引，统一尺度融合，相关度闸门，保底名额）
+- [x] 本地知识库（Chroma + BGE，指纹未变则复用索引，统一尺度融合，相关度闸门，保底名额）
 - [x] Streamlit 前端（实时思考过程、可编辑计划、六类结果页签、三种下载）
 - [x] 离线演示模式（与真实运行严格隔离的模型注入作用域）
 - [x] 本地追踪（span 树 / 耗时 / Token / 成本，落盘 trace.json）
@@ -610,8 +637,8 @@ wsl --import DeepResearch D:\WSL\DeepResearch "$env:USERPROFILE\Downloads\ubuntu
 - [x] 环境体检 `--doctor`
 - [x] 端到端批量测试与引用可访问性校验
 - [x] 策略消融评估 + 自研 LLM 裁判
-- [x] **584 项自检**（8 个 Phase + 缺陷专项回归，可离线运行）
-- [x] Docker 化并实测构建与运行通过
+- [x] **599 项自检**（8 个 Phase + 缺陷专项回归，可离线运行）
+- [x] Docker 化（Dockerfile + docker-compose，构建与运行已在 WSL2 上实测通过）
 
 ### 待优化
 
@@ -634,7 +661,8 @@ wsl --import DeepResearch D:\WSL\DeepResearch "$env:USERPROFILE\Downloads\ubuntu
 ## 🐛 踩坑与解决
 
 以下为开发过程中遇到并已修复的问题，按「现象 / 原因 / 解决」记录。
-其中第 1~3 条是**实际使用中暴露**的严重缺陷，也是 `tests/test_bugfix.py` 的由来。
+其中第 1~3 条是**实际使用中暴露**的严重缺陷；第 14 条来自代码复审，
+其余多数也已被 `tests/test_bugfix.py` 覆盖为回归用例。
 
 ### 1. 离线假模型泄漏到真实运行（真搜索 + 假模型）
 
@@ -789,6 +817,38 @@ BGE 归一化向量配 L2 空间时会越界。
 
 **解决**：在 `run()` 中待 stats 定稿后重新渲染报告，并同步更新报告字数。
 
+### 14. 逐章校验误用"本章"引用白名单，合法跨章引用被删除
+
+**现象**：报告正文里偶尔会**丢掉本该保留的引用编号**，同时"越界引用数"指标失真
+（40 次真实运行的存档里该指标恒为 0，从未触发过）。
+
+**原因**：写作分两步走——下发给模型的"可用事实"只含**本章**来源（`section_allowed`），
+而写完后校验用的是**全局**白名单（`allowed`）。但早期实现把 `section_allowed`
+也传给了 `sanitize_citations`，于是模型在某一章里引用了另一章来源的编号时，
+该编号被判定为"越界"并从正文中删除，还计入 `invalid_citation_count`。
+
+**为什么长期没被发现**：写作 Prompt 恰好只下发本章编号，模型很少越章引用；
+离线桩更是严格照着 `allowed_ids` 输出，所以自检怎么跑都是 0。
+
+**解决**：校验统一改用全局白名单 `allowed`；`invalid_citation_count` 改为按
+**去重后的编造编号个数**统计（同一编造编号在多章出现只算一个）；
+新增 `tests/test_bugfix.py::test_citation_scope_is_correct` 用例，
+用一个故意跨章引用 `[2]` 并编造 `[99]` 的桩模型，同时断言"合法编号保留 + 编造编号剔除"。
+
+### 15. `enableCORS=false` 让任意网站都能连上本地 Streamlit
+
+**现象**：启动 `streamlit run app.py` 时官方直接打印一长段安全警告：
+`'server.enableCORS=false' tells Streamlit not to limit cross-origin access.`
+并说明它会发送 `Access-Control-Allow-Origin: *`，且**接受任意来源的 WebSocket 连接**，
+而 `enableXsrfProtection=true` 并不能阻止这一点（开 WebSocket 不需要 XSRF token）。
+
+**原因**：`.streamlit/config.toml` 里写的是 `enableCORS = false`。
+这是"为了图省事让浏览器能连上"的常见误配——但它实际效果是把跨源限制整个关掉。
+
+**解决**：改为 `enableCORS = true` 并用 `corsAllowedOrigins` 只放行本机来源
+（`http://127.0.0.1:8501`、`http://localhost:8501`），因此本机与 Docker 本地访问不受影响，
+同时杜绝"你打开任意网页时，该网页顺手连上你本机 8501"的风险。
+
 ## 📝 开发日志
 
 - **Phase 1 - 基础链路**：环境搭建、LangGraph 状态图、规划 → 搜索 → 提取最小链路
@@ -802,6 +862,11 @@ BGE 归一化向量配 L2 空间时会越界。
 - **Phase 9 - 工程化**：Dockerfile / docker-compose / .dockerignore、Streamlit 服务端配置、仓库卫生检查、README 定稿
 - **Phase 10 - 真实使用缺陷修复**：依据实际交互测试暴露的问题，修复假模型跨模式泄漏、
   二进制内容当网页正文、子问题缺少主语、PDF 中文不折行四处缺陷，并新增 `tests/test_bugfix.py` 专项回归
+- **Phase 11 - 复审修复**：静态复审 + 全量复跑自检后修复——逐章校验误用"本章"引用白名单
+  （合法跨章引用被删、越界引用数失真）、`LANGFUSE_BASE_URL` 与 `LANGFUSE_HOST` 变量名不一致、
+  `USE_LOCAL_KB` / `MAX_ITERATIONS` 无法用 `.env` 配置、依赖表含未使用项且未约束版本、
+  PDF 中文字体覆盖校验过松、`enableCORS=false` 放开跨源访问；
+  同步订正 README 中"增量索引""584 项离线""已实测"等措辞
 
 ## 📄 License
 

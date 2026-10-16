@@ -1,9 +1,9 @@
 """
-Bug 修复回归测试（对应真实使用中暴露的三个缺陷）。
+Bug 修复回归测试（对应真实使用中暴露的缺陷）。
 
     python tests/test_bugfix.py
 
-三个 Bug：
+已收录的 Bug：
   A. 假模型泄漏：`DeepResearchAgent(llm=假模型)` 早期用 set_llm 改写了**进程级全局**，
      Streamlit 常驻进程里"先跑离线演示、再切真实运行"会继续用假模型，
      造成"真搜索 + 假报告"的混合产物。
@@ -11,7 +11,11 @@ Bug 修复回归测试（对应真实使用中暴露的三个缺陷）。
      一路流进事实 → 报告 → PDF。
   C. 子问题没有主语："背景是什么？""现状如何？""风险在哪？"这类问题脱离原问题后
      无法理解，拿去检索必然搜回无关内容。
+  D. PDF 中文不折行：xhtml2pdf 只按空格断词，整段中文被画成单行冲出页面裁掉。
+  F. 引用白名单传错作用域：逐章校验时误用"本章"白名单，把合法的跨章引用当成
+     越界编号删掉，并让"越界引用数"指标失真。
 """
+import json
 import os
 import sys
 
@@ -284,6 +288,116 @@ def test_pdf_cjk_wrapping() -> None:
                   "关键片段在 PDF 里找不到了")
             check("生成 PDF 不报字体告警", not result["warnings"], str(result["warnings"]))
 
+            # 字体覆盖校验必须能識别"样本缺失"，而不是只看第一个样本是否命中
+            import report as report_module
+
+            html_ok = report_module.markdown_to_html(
+                report_md, title="排版回归测试", font_path=report_module.find_cjk_font()[0],
+                font_family=report_module.PDF_FONT_NAME, for_pdf=True,
+            )
+            check("字符齐全时校验通过",
+                  report_module._verify_cjk_text(pdf_path, html_ok) == "",
+                  "正常文档被判为缺字")
+            # 把正文里出现最多的一段中文整体换成 PDF 里不存在的生僻字，
+            # 制造"大面积缺字"，校验必须报错（早期只看单个样本命中，会漏判）
+            tampered = html_ok.replace("这是一段没有任何换行符", "齉龘靐齉龘齉龘靐齉龘齉龘")
+            check("篡改确实命中了正文", tampered != html_ok, "替换目标不在文档里，用例本身无效")
+            check("样本大面积缺失时校验能报错",
+                  report_module._verify_cjk_text(pdf_path, tampered) != "",
+                  "缺字样本未被检出，PDF 方框字会漏判")
+
+
+# ========== Bug F：引用白名单传错作用域（合法跨章引用被删除）==========
+class _CrossCiteLLM:
+    """
+    故意让"第一章"的正文**跨章引用**第二章来源的编号 [2]，并额外编造一个 [99]。
+    用于验证：合法编号必须保留，只有编造编号才被剔除。
+    """
+
+    def __init__(self, facts_by_id: dict):
+        self.facts_by_id = facts_by_id
+        self.section_calls = 0
+
+    def invoke(self, messages):
+        text = messages[-1][1] if isinstance(messages[-1], tuple) else str(messages[-1])
+
+        class _R:
+            def __init__(self, content: str):
+                self.content = content
+                self.usage_metadata = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+        if '"sections"' in text:
+            return _R(json.dumps({
+                "title": "跨章引用回归",
+                "summary_points": ["要点一"],
+                "sections": [
+                    {"heading": "第一章", "focus": "先讲 A", "fact_ids": ["F1"]},
+                    {"heading": "第二章", "focus": "再讲 B", "fact_ids": ["F2"]},
+                ],
+            }, ensure_ascii=False))
+
+        if '"content"' in text:
+            self.section_calls += 1
+            # 本章只分到 1 条事实，但正文故意同时引用两个**全局合法**编号 + 一个编造编号
+            return _R(json.dumps({
+                "content": "本章结论引用本章来源[1]，并跨章引用[2]；此处另有一个编造编号[99]。"
+            }, ensure_ascii=False))
+
+        if '"conclusion"' in text:
+            return _R(json.dumps({"summary": "摘要[1]", "conclusion": "结论[2]"},
+                                 ensure_ascii=False))
+
+        return _R("{}")
+
+
+def test_citation_scope_is_correct() -> None:
+    """
+    曾经的问题：逐章写作时把**本章**的引用白名单传给了 sanitize_citations，
+    于是模型跨章引用另一条同样合法的来源时，该引用被当作"越界编号"从正文里删掉，
+    还被计入"越界引用数"。因为写作 Prompt 恰好只下发本章编号，
+    这个问题长期没有被真实运行触发，指标恒为 0。
+    """
+    print("\n[F] 引用白名单必须用全局范围（跨章引用是合法的）")
+    import writer
+
+    facts = [
+        {"id": "F1", "claim": "事实一", "source_url": "https://a.example.com/1",
+         "source_title": "来源A", "confidence": 0.9, "credibility": 0.9},
+        {"id": "F2", "claim": "事实二", "source_url": "https://b.example.com/2",
+         "source_title": "来源B", "confidence": 0.9, "credibility": 0.6},
+        {"id": "F3", "claim": "事实三", "source_url": "https://c.example.com/3",
+         "source_title": "来源C", "confidence": 0.8, "credibility": 0.5},
+    ]
+    citations, fact_to_cite = writer.build_citations(facts)
+    check("三个来源各拿到一个引用号",
+          sorted(c["index"] for c in citations) == [1, 2, 3],
+          str(citations))
+
+    state = {"question": "跨章引用回归问题", "stats": {}, "facts": facts,
+             "plan_summary": "", "plan": []}
+    stub = _CrossCiteLLM({f["id"]: f for f in facts})
+    out = writer.build_report(state, llm=stub)
+    report, stats = out["report"], out["stats"]
+    body = "\n".join(s["content"] for s in report["sections"])
+
+    check("第一章确实跨章引用了 [2]", "[2]" in body, body)
+    check("跨章引用的合法编号未被删除", "[2]" in body and "[1]" in body, body)
+    check("编造的 [99] 被剔除", "[99]" not in body, body)
+    check("越界引用数只统计编造编号（去重后为 1）",
+          stats["invalid_citation_count"] == 1, str(stats.get("invalid_citations")))
+    check("越界明细指向编造的编号 99",
+          set(stats.get("invalid_citations") or []) == {99},
+          str(stats.get("invalid_citations")))
+    check("保留下来的来源编号连续无断号",
+          [c["index"] for c in report["citations"]] == [1, 2],
+          str([c["index"] for c in report["citations"]]))
+    check("未被正文引用的 F3 来源被剔除（重编号的副作用）",
+          all("c.example.com" not in c["url"] for c in report["citations"]),
+          str([c["url"] for c in report["citations"]]))
+    check("正文引用号都在参考文献范围内",
+          set(writer.find_citations(body)) <= {c["index"] for c in report["citations"]},
+          body)
+
 
 # ========== 端到端：离线链路仍然正常 ==========
 def test_end_to_end_still_works() -> None:
@@ -311,12 +425,13 @@ def test_end_to_end_still_works() -> None:
 
 def main() -> int:
     print("=" * 64)
-    print("Bug 修复回归测试：假模型泄漏 / 乱码 / 子问题无主语")
+    print("Bug 修复回归测试：假模型泄漏 / 乱码 / 子问题无主语 / 跨章引用")
     print("=" * 64)
     test_llm_scope_isolation()
     test_binary_content_rejected()
     test_subquestion_self_contained()
     test_pdf_cjk_wrapping()
+    test_citation_scope_is_correct()
     test_end_to_end_still_works()
 
     print("\n" + "=" * 64)

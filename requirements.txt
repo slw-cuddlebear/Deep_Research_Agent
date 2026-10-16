@@ -1,48 +1,60 @@
+# ========== 依赖清单 ==========
+# 版本策略：**直接依赖**给下界（= 本机实测通过的版本）与主版本上界，
+# 避免上游大版本升级把项目打挂，同时不像 `==` 那样在其它平台上卡死。
+# 本文件编写时实测通过的环境见 README「工程验证记录」。
+#
+# 关于间接依赖：numpy / lxml / httpx 属于间接依赖（分别由 pandas、
+# beautifulsoup4、langchain-openai 引入），项目代码没有直接 import，
+# 这里保留是为了把版本钉在已验证区间内。
+# sentence-transformers 同理：实际走 langchain-huggingface，不直接 import。
+#
+# 已移除的依赖（全仓库零引用，属历史遗留）：
+#   langchain-classic、rank_bm25、tqdm
+
 # ========== 编排框架 ==========
-langgraph
-langchain
-langchain-core
-langchain-community
-langchain-classic
-langchain-openai
-langchain-text-splitters
-langchain-chroma
-langchain-huggingface
+langgraph>=1.2,<2
+langchain>=1.4,<2
+langchain-core>=1.6,<2
+langchain-community>=0.4,<1
+langchain-openai>=1.6,<2
+langchain-text-splitters>=1.1,<2
+langchain-chroma>=1.1,<2
+langchain-huggingface>=1.2,<2
 
 # ========== 大模型与环境 ==========
-python-dotenv
-pydantic
-tenacity
+python-dotenv>=1.2,<2
+pydantic>=2.13,<3
+tenacity>=9.1,<10
 
 # ========== 网页搜索 ==========
-tavily-python
-ddgs
+tavily-python>=0.8,<1
+ddgs>=9.16,<10
 
 # ========== 网页抓取 ==========
-trafilatura
-beautifulsoup4
-lxml
-requests
-httpx
+trafilatura>=2.2,<3
+beautifulsoup4>=4.15,<5
+lxml>=6.1,<7
+requests>=2.34,<3
+httpx>=0.28,<1
 
 # ========== 本地知识库 ==========
-chromadb
-sentence-transformers
-rank_bm25
+# torch 不写进本文件：Dockerfile 会先单独安装 CPU 版（torch==2.6.0+cpu），
+# 之后 pip 安装本文件时即认为 torch 已满足，避免拉入约 2GB 的 nvidia-* 依赖。
+chromadb>=1.5,<2
+sentence-transformers>=6.1,<7
+numpy>=2.4,<3
 
 # ========== 前端 ==========
-streamlit
+streamlit>=1.64,<2
+pandas>=3.0,<4
 
 # ========== 报告导出 ==========
-markdown
-xhtml2pdf
-pypdf
+markdown>=3.10,<4
+xhtml2pdf>=0.2.20,<0.3
+pypdf>=6.19,<7
 
 # ========== 可观测性 ==========
-langfuse
+langfuse>=4.15,<5
 
 # ========== 工具 ==========
-rich
-pandas
-numpy
-tqdm
+rich>=15.0,<16

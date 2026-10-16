@@ -9,7 +9,9 @@
   2. 写作时把"引用号"直接喂给 LLM，要求它写 [1]、[2]，而不是让模型自由发挥。
   3. 写完后**重新编号**：只保留正文真正引用过的来源，按首次出现顺序连续编号 1..K，
      避免出现 [1][3][7] 这种断号，同时天然剔除"提取了却没用上"的来源。
-  4. 越界引用号（模型编造的 [99]）会被剔除并记录，计入引用违规统计。
+  4. 越界引用号（模型编造的 [99]）会被剔除并记录，按**去重后的编号个数**计入
+     `invalid_citation_count`（同一个编造编号在多章出现只算一个）。
+     注意：判断"越界"必须拿**全局**白名单，不能只看本章白名单——跨章引用是合法的。
 """
 import re
 from urllib.parse import urlparse
@@ -488,6 +490,10 @@ def build_report(state: dict, llm=None) -> dict:
                                if f.get("id") in fact_to_cite}
             content = write_section(question, outline["title"], section, section_facts,
                                     section_allowed, llm=llm)
+            # section_allowed 只用来压缩**下发给模型的事实清单**（让 Prompt 短一些）；
+            # 校验必须用全局白名单 allowed。早期这里把 section_allowed 也传给了
+            # sanitize_citations（现已改为下方传 allowed），导致模型跨章引用另一条
+            # 同样合法的来源时，被当成"越界编号"从正文学掉并误计入越界引用数。
             content, removed = sanitize_citations(content, allowed)
             if removed:
                 stats.setdefault("invalid_citations", []).extend(removed)
@@ -540,7 +546,7 @@ def build_report(state: dict, llm=None) -> dict:
     stats["citation_coverage"] = (
         round(len(cited_indexes) / len(final_citations), 3) if final_citations else 0.0
     )
-    stats["invalid_citation_count"] = len(stats.get("invalid_citations") or [])
+    stats["invalid_citation_count"] = len(set(stats.get("invalid_citations") or []))
     stats["report_chars"] = len(markdown)
 
     events.append(

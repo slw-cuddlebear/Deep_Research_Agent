@@ -218,6 +218,18 @@ def test_streamlit_config() -> None:
     check("关闭使用统计上报",
           data.get("browser", {}).get("gatherUsageStats") is False)
 
+    # 安全回归：enableCORS=false 会放开跨源访问——任意网站都能与本地 8501
+    # 建立 WebSocket，Streamlit 启动时会就此打印官方安全警告。
+    server = data.get("server", {})
+    check("未关闭 CORS 校验（enableCORS=false 会放开跨源 WebSocket）",
+          server.get("enableCORS") is not False, str(server.get("enableCORS")))
+    origins = server.get("corsAllowedOrigins") or ["*"]
+    check("CORS 白名单只放行本机来源（默认值 * 等于不限制）",
+          "*" not in origins, str(origins))
+    check("CORS 白名单覆盖本机访问地址",
+          any("127.0.0.1" in str(o) or "localhost" in str(o) for o in origins),
+          str(origins))
+
 
 # ========== 5. 仓库卫生 ==========
 def test_repo_hygiene() -> None:

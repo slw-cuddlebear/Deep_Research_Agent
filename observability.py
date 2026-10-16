@@ -1,4 +1,4 @@
-﻿"""
+"""
 可观测性模块（Phase 7）：本地追踪（默认常开）+ 可选 LangFuse 上报。
 
 设计：**本地追踪是权威数据源，LangFuse 是可选出口。**
@@ -421,7 +421,8 @@ def langfuse_enabled() -> bool:
 def get_langfuse_client():
     """
     构建（并缓存）LangFuse 客户端；未配置 Key 时返回 None。
-    构建失败不会抛异常，只把原因记在 `langfuse_error()` 里。
+    构建失败不抛异常：原因会随每次追踪记进 `trace["langfuse_error"]`
+    （由 Tracer._note_error 汇总），不会打断研究本身。
     """
     global _langfuse_client, _langfuse_checked
     if not langfuse_enabled():
@@ -441,11 +442,6 @@ def get_langfuse_client():
         except Exception:
             _langfuse_client = None
         return _langfuse_client
-
-
-def langfuse_error() -> str:
-    """LangFuse 客户端构建失败时的原因"""
-    return ""
 
 
 def verify_langfuse() -> tuple:

@@ -71,7 +71,6 @@ def init_state() -> None:
         ("plan_summary", ""),
         ("final_state", None),
         ("events", []),
-        ("running", False),
         ("offline", False),
         ("error", ""),
     ]:
@@ -102,7 +101,7 @@ def render_sidebar() -> dict:
             )
             max_pages = st.slider(
                 "单轮最多阅读网页数", 4, 24, config.MAX_PAGES_PER_ROUND,
-                help="名额在网页与本地知识库之间按配额分配。",
+                help="先按融合分数统一竞争名额，再给本地知识库保留下面的保底条数。",
             )
             engine = st.selectbox(
                 "网页搜索后端", ["auto", "tavily", "ddg"], index=0,
@@ -622,7 +621,7 @@ def main() -> None:
 
     if st.session_state.final_state:
         render_result(st.session_state.final_state, settings["formats"])
-    elif not st.session_state.running:
+    else:
         st.info("研究尚未开始。点击「开始研究」后会在这里实时显示思考过程。")
 
 

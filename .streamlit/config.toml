@@ -3,7 +3,14 @@
 headless = true
 port = 8501
 address = "0.0.0.0"
-enableCORS = false
+# 安全：不关 CORS。早期写成 enableCORS=false，会让**任意网站**都能与本地 8501
+# 建立 WebSocket（Streamlit 官方明确警告这一点）。这里保留 CORS 校验，
+# 只用白名单放行本机来源，因此 localhost / 127.0.0.1 访问不受影响。
+enableCORS = true
+corsAllowedOrigins = [
+    "http://127.0.0.1:8501",
+    "http://localhost:8501",
+]
 enableXsrfProtection = true
 maxUploadSize = 50
 

@@ -28,14 +28,18 @@ REQUIRED_PACKAGES = [
     ("sentence_transformers", "sentence-transformers"),
     ("trafilatura", "trafilatura"),
     ("bs4", "beautifulsoup4"),
+    ("requests", "requests"),
     ("tavily", "tavily-python"),
+    ("ddgs", "ddgs"),
     ("streamlit", "streamlit"),
+    ("pandas", "pandas"),
     ("langfuse", "langfuse"),
     ("markdown", "markdown"),
     ("xhtml2pdf", "xhtml2pdf"),
     ("pypdf", "pypdf"),
     ("pydantic", "pydantic"),
     ("dotenv", "python-dotenv"),
+    ("tenacity", "tenacity"),
     ("rich", "rich"),
 ]
 
@@ -124,12 +128,12 @@ def check_pdf_font() -> bool:
 
 
 def check_python() -> bool:
-    """Python 版本检查"""
+    """Python 版本检查（README 与技术栈声明 Python 3.11；3.10 起可运行）"""
     version = sys.version_info
     ok = version >= (3, 10)
     console.print(
         f"{'✔' if ok else '✖'} Python 版本：{sys.version.split()[0]}"
-        + ("" if ok else "（需要 3.10 及以上）")
+        + ("" if ok else "（需要 3.10 及以上；项目声明并实测的是 3.11）")
     )
     return ok
 

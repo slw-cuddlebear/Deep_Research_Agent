@@ -414,6 +414,10 @@ def _verify_cjk_text(pdf_path, html: str) -> str:
 
     抽样时会**剔除 <title> 标签的内容**——标题走的是元数据路径，
     不能拿它来证明正文渲染正常。
+
+    判定口径：均匀抽取正文里的中文片段，要求**绝大多数**（>75%）能在 PDF 文本层找到。
+    早期版本只要求"任意一个片段命中"，抽 20 个样本只看第一个字面命中就放过，
+    遇到字体只覆盖部分汉字（其余渲染成方框）时会漏判。
     """
     try:
         from pypdf import PdfReader
@@ -429,16 +433,27 @@ def _verify_cjk_text(pdf_path, html: str) -> str:
     if not extracted.strip():
         return ""
 
+    # 只取**正文可见文本**作样本：<style>/<script> 里的 CSS 注释也含大量汉字，
+    # 但它们不会出现在 PDF 文本层里，拿来当样本会造成误报。
     body_html = re.sub(r"<title>.*?</title>", " ", html or "", flags=re.S)
+    body_html = re.sub(r"<(style|script)\b.*?</\1>", " ", body_html, flags=re.S | re.I)
     samples = re.findall(r"[\u4e00-\u9fa5]{3,}", _strip_html(body_html))
     if not samples:
         return ""
 
+    # 去重后均匀取样：涵盖报告首尾，避免只看开头的几段
+    unique = list(dict.fromkeys(samples))
+    if len(unique) > 20:
+        step = len(unique) / 20
+        unique = [unique[int(i * step)] for i in range(20)]
+
     flat = extracted.replace("\n", "")
-    for sample in samples[:20]:
-        if sample[:3] in flat:
-            return ""   # 至少命中一个正文片段，说明字体确实生效了
-    return samples[0][:12]
+    missing = [s for s in unique if s[:3] not in flat]
+    # 允许个别片段因为 PDF 文本抽取的换行/空格差异而没命中；
+    # 但只要缺失比例超过 1/4，就说明字体覆盖不全（部分汉字会渲染成方框）。
+    if len(missing) > max(1, len(unique) // 4):
+        return missing[0][:12]
+    return ""
 
 
 def _strip_html(html: str) -> str:

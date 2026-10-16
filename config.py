@@ -26,6 +26,25 @@ DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").s
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
 TEMPERATURE = 0.3
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    """解析布尔型环境变量：0/false/no/off（不分大小写）视为 False，其余非空视为 True"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _env_int(name: str, default: int) -> int:
+    """解析整型环境变量，非法值回退默认（不让一个手滑的 .env 把程序打挂）"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
 # ========== 规划器 ==========
 MIN_SUB_QUESTIONS = 3          # 子问题数量下限
 MAX_SUB_QUESTIONS = 5          # 子问题数量上限
@@ -45,7 +64,8 @@ USER_AGENT = (
 )
 
 # ========== 反思循环 ==========
-MAX_ITERATIONS = 3             # 最大搜索轮数，防止死循环
+# 可用 .env 的 MAX_ITERATIONS 覆盖（README「Docker 部署」里教用户改的就是它）
+MAX_ITERATIONS = _env_int("MAX_ITERATIONS", 3)   # 最大搜索轮数，防止死循环
 
 # ========== 事实与引用 ==========
 MIN_FACT_CONFIDENCE = 0.3      # 低于该置信度的事实直接丢弃
@@ -71,7 +91,8 @@ LOCAL_TOP_K = 5                # 每个子问题从本地库召回几个片段
 LOCAL_MIN_SCORE = 0.45
 LOCAL_CHUNK_SIZE = 700          # 本地文档切片长度
 LOCAL_CHUNK_OVERLAP = 120       # 切片重叠
-USE_LOCAL_KB = True             # 是否启用本地知识库（可用 --no-local 关闭）
+# 是否启用本地知识库（命令行用 --no-local 关闭；.env 里可用 USE_LOCAL_KB=0 关闭）
+USE_LOCAL_KB = _env_flag("USE_LOCAL_KB", True)
 # 本地知识库的**最低**阅读名额（不是硬性比例）。
 # 本地片段数量天然少于网页，纯按分数排序容易被整体挤掉，所以保底几条；
 # 剩下的名额由网页与本地按融合分数自由竞争。
@@ -84,8 +105,14 @@ LOCAL_SCORE_BOOST = 1.15        # 融合排序时给本地结果的加权（内�
 # ========== 可观测性（Phase 7）==========
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY", "").strip()
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY", "").strip()
-LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com").strip()
-TRACING_ENABLED = os.getenv("TRACING_ENABLED", "1").strip() not in ("0", "false", "False")
+# LangFuse 官方 SDK 用的变量名是 LANGFUSE_HOST；LANGFUSE_BASE_URL 是早期版本/其它
+# SDK 的写法。两个都接受，避免用户按自己习惯填了一个却静默回退到默认 cloud 地址。
+LANGFUSE_HOST = (
+    os.getenv("LANGFUSE_HOST")
+    or os.getenv("LANGFUSE_BASE_URL")
+    or "https://cloud.langfuse.com"
+).strip()
+TRACING_ENABLED = _env_flag("TRACING_ENABLED", True)
 
 # 成本核算：美元 → 人民币汇率；模型单价可在 .env 里覆盖（美元 / 百万 tokens）
 USD_TO_CNY = float(os.getenv("USD_TO_CNY", "7.1") or 7.1)

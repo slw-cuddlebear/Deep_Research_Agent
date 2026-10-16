@@ -35,7 +35,7 @@ HIGH_TRUST_DOMAINS = (
 MEDIUM_TRUST_DOMAINS = (
     # 科技/财经行业媒体
     "36kr.com", "tmtpost.com", "cls.cn", "zhidx.com", "wallstreetcn.com", "infoq.cn",
-    "oschina.net", "sspai.com", "leiphone.com", "jiqizhixin.com", "thepaper.cn",
+    "oschina.net", "sspai.com", "leiphone.com", "jiqizhixin.com",
     "chyxx.com", "iimedia.cn", "fxbaogao.com", "qianzhan.com", "askci.com",
     # 技术社区与博客
     "zhihu.com", "juejin.cn", "csdn.net", "cnblogs.com", "segmentfault.com",
