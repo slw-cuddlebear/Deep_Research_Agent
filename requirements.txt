@@ -38,8 +38,12 @@ requests>=2.34,<3
 httpx>=0.28,<1
 
 # ========== 本地知识库 ==========
-# torch 不写进本文件：Dockerfile 会先单独安装 CPU 版（torch==2.6.0+cpu），
-# 之后 pip 安装本文件时即认为 torch 已满足，避免拉入约 2GB 的 nvidia-* 依赖。
+# torch 必须**显式锁版本**：sentence-transformers 依赖 torch，若不约束，
+# pip 会把已安装的 CPU 版升级成 PyPI 上的 CUDA 版，连带拉入约 3GB 的
+# nvidia-* / triton 依赖（实测镜像因此从 2.2GB 膨胀到 6.7GB site-packages）。
+# Docker 构建会先从上交大 PEP 503 索引装 torch==2.6.0+cpu，本行的 ==2.6.0
+# 与之兼容（本地版本号带 +cpu 后缀仍满足 ==2.6.0），从而阻止这次升级。
+torch==2.6.0
 chromadb>=1.5,<2
 sentence-transformers>=6.1,<7
 numpy>=2.4,<3

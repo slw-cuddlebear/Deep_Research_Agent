@@ -515,20 +515,28 @@ F30 的 12% 是 DualPipe 气泡率，报告将二者合并为同一因果表述"
 > 因此上面的清单是"编写时实测通过"的记录，不是逐包锁定的 lock 文件。
 > Docker 相关结论同样是**当时的实测记录**（见下表），换机器或上游发版后需重新验证。
 
-**Docker 验证**（Windows 11 + WSL2 Ubuntu 24.04.3 + Docker 29.1.3，历史记录）：
+**Docker 验证**（Windows 11 + WSL2 Ubuntu 24.04 + Docker 29.1.3 + buildx 0.30.1，
+以下结果在 Phase 11 复审时**重新实测**过一次）：
 
 | 验证项 | 结果 |
 |---|---|
-| `docker build` | 成功，镜像 3.17GB |
+| `docker build`（BuildKit） | 成功，镜像 3.27GB |
 | `torch.__version__` | `2.6.0+cpu`，`cuda.is_available() = False` |
+| 镜像内 nvidia-* 包数 | **0**（CPU 版 torch 生效，未误拉 CUDA 依赖） |
 | 中文字体探测 | `/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc` |
 | 容器内 `tests/test_phase1.py` | 34 项全过 |
 | `docker compose config` | 配置合法 |
-| `docker compose up -d web` | `Up (healthy)` |
+| `docker compose up -d web` | `Up (healthy)`（约 10 秒转 healthy） |
 | 健康检查 `/_stcore/health` | 返回 `ok` |
 | `curl localhost:8501` | HTTP 200 |
+| 跨源请求携带 `Origin` | 不回 `Access-Control-Allow-Origin` 通配头（CORS 白名单生效） |
 | 容器内 `main.py --offline` | 完整链路跑通（2 轮检索 / 8 事实 / 4 引用） |
+| 容器内 PDF 导出 | 51KB / 2 页 / 抽出 515 个汉字（中文字体链路正常） |
 | `docker compose down` | 正常清理 |
+
+> 构建若在 **legacy builder**（未安装 buildx）下进行，`RUN --mount=type=cache` 会报语法
+> 错误，去掉该 mount 即可；此时 `pip` 仍会因解析近 200 个依赖而在**内存偏紧**的 WSL2 里
+> 偶发段错误——见「踩坑与解决」第 16 条，升级 pip 与使用 BuildKit 都能规避。
 
 ## 🐳 Docker 部署
 
@@ -590,10 +598,22 @@ docker compose run --rm eval
 
 **② CPU 版 torch 的镜像源差异**：同一个 wheel 实测
 `mirror.sjtu.edu.cn` 为 **11.9 MB/s**，`mirrors.aliyun.com` 仅 **0.08 MB/s**（会导致构建超时）。
-Dockerfile 默认使用前者，可通过 `--build-arg TORCH_WHEEL=...` 覆盖。
-另需注意上交大的 `/cpu/` 是 PEP 503 包索引（按包名分子目录），不能作为 `--find-links` 扁平列表使用。
+Dockerfile 默认把上交大的 `/cpu/` 当作 **PEP 503 索引**使用（`--extra-index-url`），
+可通过 `--build-arg TORCH_CPU_INDEX=...` / `TORCH_SPEC=...` 覆盖。
+注意该目录是按包名分子目录的包索引，**不能**当 `--find-links` 扁平列表用。
 
-**③ Windows 家庭版的 Docker 安装**：Docker Desktop 官方安装包所在域名同样被重置，
+**③ 建议安装 buildx（BuildKit）**：Dockerfile 的依赖层用了 `RUN --mount=type=cache`，
+需要 BuildKit。Debian/Ubuntu 系直接装即可（几十 MB）：
+
+```bash
+apt-get install -y docker-buildx      # 之后 DOCKER_BUILDKIT=1 docker build ... ，或直接 docker build
+```
+
+在内存偏紧的 WSL2 里，**legacy builder 更容易触发 pip 段错误**（见「踩坑与解决」第 16 条），
+所以这一步不只是为了加速。若确实无法安装 buildx，把依赖层那两个 `--mount` 去掉也能构建，
+但建议保证宿主有 6GB 以上可用内存。
+
+**④ Windows 家庭版的 Docker 安装**：Docker Desktop 官方安装包所在域名同样被重置，
 国内镜像仅存旧版（`mirror.azure.cn` 实测 15.6 MB/s，版本停留在 Docker Desktop 4.1.1）。
 家庭版必须依赖 WSL2，而 WSL2 官方下载源（`aka.ms`、`wslstorestorage`、GitHub Releases）亦不可达。
 不依赖 Windows 管理员权限的可行路径：
@@ -849,6 +869,43 @@ BGE 归一化向量配 L2 空间时会越界。
 （`http://127.0.0.1:8501`、`http://localhost:8501`），因此本机与 Docker 本地访问不受影响，
 同时杜绝"你打开任意网页时，该网页顺手连上你本机 8501"的风险。
 
+### 16. `docker build` 里 pip 段错误（exit 139），以及 CPU 版 torch 被静默换成 CUDA 版
+
+**现象**：Phase 11 复审重新构建镜像时，`RUN pip install -r requirements.txt` 反复失败。
+报错还**不稳定**：一次是 `Segmentation fault (core dumped)`（exit 139），
+另一次是 `UnboundLocalError: cannot access local variable 'suffix'`
+（崩在 `importlib` 导入 `_manylinux` 的路径上），崩溃点每次落在不同的包上（langchain / chromadb / streamlit）。
+同一条命令在 `docker run` 起的容器里却能 100% 成功。
+
+**原因**：两个独立问题叠在一起。
+
+1. **pip 24.0 在内存吃紧的环境下解析近 200 个依赖会崩**。`python:3.11-slim` 自带 pip 24.0，
+   而 `requirements.txt` 的依赖图很大（torch / transformers / chromadb / streamlit …）。
+   实测把宿主内存压到只剩 2.1GB（Windows 侧 `Memory Compression` 已占 2.4GB）时必崩，
+   宿主释放到 6GB 后同一构建直接通过——**崩溃点随机、报错各不相同**正是内存损坏的特征，
+   不是 pip 的业务逻辑 bug。另外本机 WSL 里没装 buildx，一直走 legacy builder，
+   而 legacy builder 的 `RUN` 无法挂载缓存卷，重试时下载与解包的压力无法缓解。
+2. **CPU 版 torch 被 `sentence-transformers` 升级掉了**。早期 Dockerfile 的写法是
+   "先单独装 `torch==2.6.0+cpu`，再装 requirements"，但 requirements 里**没有约束 torch**，
+   于是 pip 在解析 `sentence-transformers` 时把 CPU 版升级成了 PyPI 上的 CUDA 版：
+   `torch 2.14.1+cu130` + 15 个 `nvidia-*` 包 + triton，site-packages 从 2.2GB 涨到 6.7GB。
+
+**解决**：
+
+- Dockerfile 在装依赖前先 `pip install --upgrade pip`（24.0 → 26.2.1），
+  并在 `RUN` 上加 `--mount=type=cache,target=/root/.cache/pip`（需 BuildKit），
+  依赖图解析从此稳定通过；
+- `requirements.txt` 里**显式写死 `torch==2.6.0`**，与 Dockerfile 的 `TORCH_SPEC` 对齐，
+  从根上阻止这次静默升级；
+- 上交大 `/cpu/` 改为直接当 **PEP 503 索引**用（原先硬编码某个 wheel 直链，会随上游清理失效）；
+- 构建末尾加了三条断言：打印 torch 版本、断言 `'cpu' in torch.__version__` 且 CUDA 不可用、
+  断言 `pip list` 里没有 `nvidia-*` 包。任何一条不满足就直接构建失败，
+  避免"镜像看起来构建成功、其实悄悄多了 3GB CUDA 依赖"。
+
+> 顺带记录一个坑：`torch.__version__` 在安装后往往被**归一化**成 `2.6.0`
+> （丢掉 `+cpu` 后缀），所以断言不能写 `endswith("+cpu")`——第一次加固时就因为这个
+> 误判把成功的构建判成了失败。
+
 ## 📝 开发日志
 
 - **Phase 1 - 基础链路**：环境搭建、LangGraph 状态图、规划 → 搜索 → 提取最小链路
@@ -867,6 +924,10 @@ BGE 归一化向量配 L2 空间时会越界。
   `USE_LOCAL_KB` / `MAX_ITERATIONS` 无法用 `.env` 配置、依赖表含未使用项且未约束版本、
   PDF 中文字体覆盖校验过松、`enableCORS=false` 放开跨源访问；
   同步订正 README 中"增量索引""584 项离线""已实测"等措辞
+- **Phase 12 - Docker 实测复核**：补齐 buildx 后用 BuildKit 重新构建镜像并完整验证——
+  修复"pip 24.0 在大依赖图下段错误"（先升级 pip + 缓存挂载）与
+  "CPU 版 torch 被 sentence-transformers 静默升级成 CUDA 版"（requirements 显式锁 torch==2.6.0），
+  并在构建末尾加入 torch 变体与 nvidia 依赖断言
 
 ## 📄 License
 

@@ -27,23 +27,23 @@ LABEL org.opencontainers.image.title="Deep Research Agent" \
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 # ---- CPU 版 PyTorch ----
 # 项目只在 CPU 上跑 embedding，而 PyPI 上 Linux 的 torch 默认是 CUDA 版，
-# 会连带拉约 2GB 的 nvidia-* 依赖，明显撑大镜像。
+# 会连带拉约 3GB 的 nvidia-* / triton 依赖，明显撑大镜像。
 # 所以先从国内镜像单独装 CPU 版，后面装 requirements 时 pip 会认为 torch 已满足。
 # （实测最终镜像体积约 3.17GB，见 README「工程验证记录」。）
 #
 # 镜像源实测（同一个 torch-2.6.0+cpu 轮子）：
 #   上交大 mirror.sjtu.edu.cn  11.9 MB/s  ✅
 #   阿里云 mirrors.aliyun.com   0.08 MB/s  ❌（会卡到超时）
-# 注意：上交大的 /cpu/ 是 PEP 503 包索引（按包名分子目录），
-# 不能当 --find-links 用，只能走直链或用它当 index。
 #
-# ⚠️ 这里的 torch 版本（2.6.0+cpu）是容器内 CPU 轮子的**锁定版本**，
-# 与 requirements.txt 无关（该文件不写 torch）。本机 Windows 开发环境的 torch
-# 版本可能不同，不影响镜像构建。
+# 上交大的 /cpu/ 是**标准 PEP 503 包索引**（按包名分子目录，torch/ 子目录里就是各
+# 版本的轮子），因此可以直接当 index 用，比硬编码某个直链更稳（直链会随上游清理失效）。
+#
+# ⚠️ requirements.txt 里也写了 torch==2.6.0，两处版本必须一致：否则
+# sentence-transformers 会把已装的 CPU 版**升级成 CUDA 版**，白白多出 3GB 依赖
+# （这是实际踩过的回归，见 README「踩坑与解决」第 16 条）。
 
-ARG TORCH_WHEEL=https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/torch-2.6.0%2Bcpu-cp311-cp311-linux_x86_64.whl
 ARG TORCH_CPU_INDEX=https://mirror.sjtu.edu.cn/pytorch-wheels/cpu/
-ARG TORCH_SPEC=torch==2.6.0+cpu
+ARG TORCH_SPEC=torch==2.6.0
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -77,14 +77,24 @@ WORKDIR /app
 
 # ---- 依赖层：单独 COPY requirements.txt，代码改动时不必重装依赖 ----
 COPY requirements.txt ./
-# 第一步：装 CPU 版 torch（直链优先，失败则回退到上交大的包索引）
-# 第二步：装其余依赖；此时 torch 已满足，pip 不会再拉 CUDA 版
-RUN set -eux; \
-    pip install --no-cache-dir -i "${PIP_INDEX_URL}" "${TORCH_WHEEL}" \
-      || pip install --no-cache-dir -i "${PIP_INDEX_URL}" \
-             --extra-index-url "${TORCH_CPU_INDEX}" "${TORCH_SPEC}"; \
-    pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt; \
-    python -c "import torch; print('torch', torch.__version__, '| CUDA:', torch.cuda.is_available())"
+# 第 0 步：先升级 pip。基础镜像自带的 pip 24.0 太旧，在内存受限的 WSL2 里解析本项目
+#   近 200 个依赖时会发生**段错误**（实测 exit 139 / 偶发 UnboundLocalError，
+#   崩在不同包上、不可稳定复现，是典型的内存损坏）。升级到 pip 26 后同一命令稳定通过。
+# 第 1 步：装 CPU 版 torch（PEP 503 索引）；requirements.txt 里同样锁了 torch==2.6.0，
+#   否则后续会被 sentence-transformers 升级成 CUDA 版并多拉约 3GB 的 nvidia-*。
+# 第 2 步：装其余依赖；此时 torch 已满足，pip 不会再拉 CUDA 版。
+#
+# 关于 --mount=type=cache：把 pip 的下载缓存挂进来，重复构建不必重下（首次仍要下）。
+# 该语法需要 BuildKit；若你的 Docker 只有 legacy builder，去掉这两个 --mount 即可，
+# 其余指令与两种构建器都兼容（详见 README「国内网络环境部署说明」）。
+RUN --mount=type=cache,target=/root/.cache/pip set -eux; \
+    pip install --upgrade -i "${PIP_INDEX_URL}" pip; \
+    pip install -i "${PIP_INDEX_URL}" \
+        --extra-index-url "${TORCH_CPU_INDEX}" "${TORCH_SPEC}"; \
+    pip install -i "${PIP_INDEX_URL}" -r requirements.txt; \
+    python -c "import torch; print('torch', torch.__version__, '| CUDA:', torch.cuda.is_available())"; \
+    python -c "import torch; assert 'cpu' in torch.__version__ and not torch.cuda.is_available(), 'torch 不是 CPU 版：' + torch.__version__"; \
+    ! pip list 2>/dev/null | grep -qi '^nvidia-'
 
 # ---- 代码层 ----
 COPY . .
